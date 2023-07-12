@@ -1,0 +1,75 @@
+digraph unix {
+rankdir="LR";
+fixedsize=true;
+concentrate=true    
+f0 [label="perf+LBR profile" style=filled color=gray60 width=1.3 height=1.3];
+f1 [label="Perf-HFSort" style=filled color=gray50  width=1.7 height=1.7];
+f101 [label="Finalize-Script" style=filled color=gray50  width=1.7 height=1.7];
+f2 [label="DSO_0" style=filled color=gray65  width=.5 height=.5];
+f3 [label="DSO_1" style=filled color=gray65  width=.5 height=.5];
+f4 [label="DSO_N" style=filled color=gray65  width=.5 height=.5];
+f5 [label="DSO_0.save-state" style=filled color=gray90  width=.5 height=.5];
+f6 [label="DSO_1.save-state" style=filled color=gray90  width=.5 height=.5];
+f7 [label="DSO_n.save-state" style=filled color=gray90  width=.5 height=.5];
+
+f701 [label="DSO_0...DSO_n.save-states" style=filled color=gray90  width=1 height=1];
+
+f8 [label="DSO_0.layout" style=filled color=gray80  width=.5 height=.5];
+f9 [label="DSO_1.layout" style=filled color=gray80  width=.5 height=.5];
+f10 [label="DSO_n.layout" style=filled color=gray80  width=.5 height=.5];
+
+f11 [label="DSO_0.lds.layout" style=filled color=gray70  width=.5 height=.5];
+f12 [label="DSO_1.lds.layout" style=filled color=gray70  width=.5 height=.5];
+f13 [label="DSO_n.lds.layout" style=filled color=gray70  width=.5 height=.5];
+
+f14 [label="linker_mapfile" style=filled color=gray75  width=1 height=1];
+
+f15 [label="ld/gold" style=filled color=gray50  width=1.3 height=1.3];
+
+f0 -> f1;
+f2 -> f1;
+f3 -> f1;
+f4 -> f1;
+
+f2 -> f0;
+f3 -> f0;
+f4 -> f0;    
+
+f1 -> f5;
+f1 -> f6;
+f1 -> f7;
+
+f5 -> f1;
+f6 -> f1;
+f7 -> f1;
+
+f5 -> f701;
+f6 -> f701;
+f7 -> f701;
+
+f701 -> f1;
+
+
+
+f1 -> f8;
+f1 -> f9;
+f1 -> f10;
+
+f8 -> f101;
+f9 -> f101;
+f10 -> f101;
+
+f101 -> f11;
+f101 -> f12;
+f101 -> f13;
+f101 -> f14;
+
+f14 -> f15;
+
+f11 -> f15;
+f12 -> f15;
+f13 -> f15;
+
+
+
+}

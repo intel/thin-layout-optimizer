@@ -1,0 +1,5 @@
+init_test_directory()
+add_test_directory(perf)
+add_test_directory(system)
+add_test_directory(util)
+add_test_directory(sym)

@@ -1,0 +1,17 @@
+/opt/google/chrome/nacl_helper_bootstrap
+/opt/compiler-explorer/gcc-4.1.2/libexec/gcc/x86_64-linux-gnu/4.1.2/cc1plus
+/usr/lib/x86_64-linux-gnu/libfido2.so.1.10.0
+/opt/compiler-explorer/gcc-4.1.2/libexec/gcc/x86_64-linux-gnu/4.1.2/cc1
+/opt/compiler-explorer/gcc-4.1.2/libexec/gcc/x86_64-linux-gnu/4.1.2/collect2
+/opt/compiler-explorer/gcc-4.1.2/libexec/gcc/x86_64-linux-gnu/4.1.2/install-tools/fixinc.sh
+/opt/compiler-explorer/gcc-4.1.2/libexec/gcc/x86_64-linux-gnu/4.1.2/install-tools/fixincl
+/opt/compiler-explorer/gcc-4.1.2/bin/gcc
+/opt/compiler-explorer/gcc-4.1.2/bin/g++
+/opt/compiler-explorer/gcc-4.1.2/bin/gccbug
+/opt/compiler-explorer/gcc-4.1.2/bin/x86_64-linux-gnu-c++
+/opt/compiler-explorer/gcc-4.1.2/bin/gcov
+/opt/compiler-explorer/gcc-4.1.2/bin/c++
+/opt/compiler-explorer/gcc-4.1.2/bin/cpp
+/opt/compiler-explorer/gcc-4.1.2/bin/x86_64-linux-gnu-gcc
+/opt/compiler-explorer/gcc-4.1.2/bin/x86_64-linux-gnu-g++
+/opt/compiler-explorer/gcc-4.1.2/bin/x86_64-linux-gnu-gcc-4.1.2
