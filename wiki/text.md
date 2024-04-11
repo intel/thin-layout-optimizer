@@ -564,16 +564,15 @@ sys	1m35.236s
 # Compare the order of sections in baseline LLVM to optimized section layout
 $> python3 ${DEMO_ROOT}/thin-layout-optimizer/scripts/compare-order-glb.py ${CUSTOM_LLVM_INSTALL}/bin/clang-18
 ...
-Distance: 82950.86089733157
+Distance: 7405.756021058722
 ...
-$> ninja install
+$> make install
 # Re-compare distance after install (see that out linker script had an effect).
 # Lower number means "closer". The exact value is not particularly meaningful.
 $> python3 ${DEMO_ROOT}/thin-layout-optimizer/scripts/compare-order-glb.py ${CUSTOM_LLVM_INSTALL}/bin/clang-18
 ...
 Distance: 265.48223611874994
 ...
-$> make install
 ```
 
 
