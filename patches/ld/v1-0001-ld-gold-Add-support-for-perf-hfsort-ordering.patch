@@ -103,7 +103,7 @@ index b94855f8662..8e57776e657 100644
 @@ -2918,17 +2919,32 @@ Layout::find_section_order_index(const std::string& section_name)
  // Read the sequence of input sections from the file specified with
  // option --section-ordering-file.
-
+ 
 -void
 +Exit_status
  Layout::read_layout_from_file()
@@ -113,7 +113,7 @@ index b94855f8662..8e57776e657 100644
 +  bool mayfail = parameters->section_ordering_file_mayfail();
    std::ifstream in;
    std::string line;
-
+ 
    in.open(filename);
 -  if (!in)
 -    gold_fatal(_("unable to open --section-ordering-file file %s: %s"),
@@ -135,9 +135,9 @@ index b94855f8662..8e57776e657 100644
 +  }
 +
 +  gold_debug (DEBUG_FILES, "Using section ordering file %s", filename);
-
+ 
    File_read::record_file_read(filename);
-
+ 
 @@ -2940,12 +2956,32 @@ Layout::read_layout_from_file()
      {
        if (!line.empty() && line[line.length() - 1] == '\r')   // Windows
@@ -182,20 +182,20 @@ index b94855f8662..8e57776e657 100644
 +
 +  return GOLD_OK;
  }
-
+ 
  // Finalize the layout.  When this is called, we have created all the
 diff --git a/gold/layout.h b/gold/layout.h
 index 040c98cd9aa..e7a05f564ed 100644
 --- a/gold/layout.h
 +++ b/gold/layout.h
 @@ -617,7 +617,7 @@ class Layout
-
+ 
    // Read the sequence of input sections from the file specified with
    // linker option --section-ordering-file.
 -  void
 +  Exit_status
    read_layout_from_file();
-
+ 
    // Layout an input reloc section when doing a relocatable link.  The
 diff --git a/gold/main.cc b/gold/main.cc
 index c6aa1901a95..5e3cd6a0d60 100644
@@ -204,16 +204,16 @@ index c6aa1901a95..5e3cd6a0d60 100644
 @@ -50,6 +50,8 @@
  #include "gdb-index.h"
  #include "timer.h"
-
+ 
 +#include "ld-and-gold-sect-alignment-tab.h"
 +
  using namespace gold;
-
+ 
  // This function emits the commandline to a hard-coded file in temp.
 @@ -174,6 +176,8 @@ main(int argc, char** argv)
    // Store some options in the globally accessible parameters.
    set_parameters_options(&command_line.options());
-
+ 
 +  set_parameters_section_ordering_file_from_env();
 +
    // Do this as early as possible (since it prints a welcome message).
@@ -222,19 +222,19 @@ index c6aa1901a95..5e3cd6a0d60 100644
 @@ -232,8 +236,9 @@ main(int argc, char** argv)
    if (layout.incremental_inputs() != NULL)
      layout.incremental_inputs()->report_command_line(argc, argv);
-
+ 
 -  if (parameters->options().section_ordering_file())
 -    layout.read_layout_from_file();
 +  if (parameters->get_section_ordering_file())
 +    if (layout.read_layout_from_file() == GOLD_ERR)
 +      set_parameters_section_ordering_file_failure();
-
+ 
    // Load plugin libraries.
    if (command_line.options().has_plugins())
 @@ -323,6 +328,9 @@ main(int argc, char** argv)
    if (mapfile != NULL)
      mapfile->close();
-
+ 
 +  ld_and_gold_tab_drop ();
 +
 +
@@ -247,14 +247,14 @@ index 46f658f23ea..bb4dfa1e88b 100644
 +++ b/gold/options.h
 @@ -1243,7 +1243,9 @@ class General_options
  	      N_("Strip LTO intermediate code sections"), NULL);
-
+ 
    DEFINE_string(section_ordering_file, options::TWO_DASHES, '\0', NULL,
 -		N_("Layout sections in the order specified"),
 +		N_("Layout sections in the order specified. May also be "
 +		   "specified using the environment variable "
 +		   "'GOLD_ORDERING_SCRIPT'"),
  		N_("FILENAME"));
-
+ 
    DEFINE_special(section_start, options::TWO_DASHES, '\0',
 diff --git a/gold/output.cc b/gold/output.cc
 index a1978eb5f32..0eb892a27df 100644
@@ -263,7 +263,7 @@ index a1978eb5f32..0eb892a27df 100644
 @@ -46,6 +46,8 @@
  #include "layout.h"
  #include "output.h"
-
+ 
 +#include "ld-and-gold-sect-alignment-tab.h"
 +
  // For systems without mmap support.
@@ -272,7 +272,7 @@ index a1978eb5f32..0eb892a27df 100644
 @@ -2409,6 +2411,16 @@ Output_section::add_input_section(Layout* layout,
  				    &addralign))
      input_section_size = uncompressed_size;
-
+ 
 +  uint64_t alignment = ld_and_gold_tab_find (secname);
 +  if (alignment != LD_AND_GOLD_BAD_ALIGN_POW && alignment < 32)
 +    {
@@ -304,13 +304,13 @@ index 90bc4db8d46..c6b4364310c 100644
  #include "target.h"
  #include "target-select.h"
 +#include "ld-and-gold-env-scripts.h"
-
+ 
  namespace gold
  {
 @@ -231,6 +232,52 @@ Parameters::check_rodata_segment()
      gold_error(_("-Trodata-segment is meaningless without --rosegment"));
  }
-
+ 
 +// Set the section_ordering_file using 'GOLD_ORDERING_SCRIPT' if the
 +// user-option '--section-ordering-file' wasn't specified.
 +void
@@ -358,12 +358,12 @@ index 90bc4db8d46..c6b4364310c 100644
 +}
 +
  // Return the name of the entry symbol.
-
+ 
  const char*
 @@ -282,6 +329,14 @@ Parameters::incremental_update() const
  	  || this->incremental_mode_ == General_options::INCREMENTAL_AUTO);
  }
-
+ 
 +void
 +set_parameters_section_ordering_file_failure()
 +{ static_parameters.set_section_ordering_file_failure(); }
@@ -382,7 +382,7 @@ index 76202b186e4..ae389132c0a 100644
 @@ -176,7 +176,36 @@ class Parameters
    bool
    incremental_update() const;
-
+ 
 - private:
 +  // Get section_ordering_file. This first tries the user-option from
 +  // '--section-ordering-file'. It ifs not present, it tries the file from the
@@ -416,7 +416,7 @@ index 76202b186e4..ae389132c0a 100644
 +private:
    void
    set_target_once(Target*);
-
+ 
 @@ -197,6 +226,8 @@ class Parameters
    int debug_;
    int incremental_mode_;
@@ -424,12 +424,12 @@ index 76202b186e4..ae389132c0a 100644
 +  const char *section_ordering_file_from_env_ = NULL;
 +  bool section_ordering_file_has_failed_ = false;
  };
-
+ 
  // This is a global variable.
 @@ -205,6 +236,12 @@ extern const Parameters* parameters;
  // We use free functions for these since they affect a global variable
  // that is internal to parameters.cc.
-
+ 
 +extern void
 +set_parameters_section_ordering_file_failure();
 +
@@ -438,7 +438,7 @@ index 76202b186e4..ae389132c0a 100644
 +
  extern void
  set_parameters_errors(Errors* errors);
-
+ 
 diff --git a/gold/target.h b/gold/target.h
 index 307c98f4a10..cf5a565a83c 100644
 --- a/gold/target.h
@@ -446,7 +446,7 @@ index 307c98f4a10..cf5a565a83c 100644
 @@ -88,6 +88,18 @@ class Target
    machine_code() const
    { return this->pti_->machine_code; }
-
+ 
 +  const char *
 +  machine_code_name () const
 +  {
@@ -1008,14 +1008,14 @@ index a0f8a15c7a9..f590d7de95e 100644
 --- a/ld/ld.h
 +++ b/ld/ld.h
 @@ -313,6 +313,9 @@ typedef struct
-
+ 
    /* Compress DWARF debug sections.  */
    enum compressed_debug_section_type compress_debug;
 +
 +  /* The optional text section ordering file.  */
 +  const char *text_section_ordering_file;
  } ld_config_type;
-
+ 
  extern ld_config_type config;
 diff --git a/ld/ldemul.c b/ld/ldemul.c
 index d0943de1f2a..7e0693753f3 100644
@@ -1024,7 +1024,7 @@ index d0943de1f2a..7e0693753f3 100644
 @@ -59,6 +59,12 @@ ldemul_before_parse (void)
    ld_emulation->before_parse ();
  }
-
+ 
 +const char *
 +ldemul_emulation_name (void)
 +{
@@ -1055,16 +1055,16 @@ index df7c9cbd65e..30c46b61587 100644
  	  return i->renamed;
  	}
      }
--
+-	 
 +
    return filename;
  }
-
+ 
 @@ -686,7 +686,7 @@ ldfile_open_file (lang_input_statement_type *entry)
  	      argv[1] = "missing-lib";
  	      argv[2] = (char *) entry->local_sym_name;
  	      argv[3] = NULL;
--
+-      
 +
  	      if (verbose)
  		einfo (_("%P: About to run error handling script '%s' with arguments: '%s' '%s'\n"),
@@ -1074,13 +1074,13 @@ index df7c9cbd65e..30c46b61587 100644
    struct script_name_list *script;
    size_t len;
 +  bool use_text_section_ordering_file = false;
-
+ 
    /* PR 24576: Catch the case where the user has accidentally included
       the same linker script twice.  */
 @@ -905,6 +906,23 @@ ldfile_open_command_file_1 (const char *name, enum script_open_style open_how)
  	}
      }
-
+ 
 +  if (strcmp (name, "config.text_section_ordering_file") == 0)
 +    {
 +      /* Support
@@ -1102,14 +1102,14 @@ index df7c9cbd65e..30c46b61587 100644
       It will be released when the linker exits, and it is unlikely to ever
       be more than a few tens of bytes.  */
 @@ -931,7 +949,8 @@ ldfile_open_command_file_1 (const char *name, enum script_open_style open_how)
-
+ 
    lineno = 1;
-
+ 
 -  saved_script_handle = ldlex_input_stack;
 +  if (!use_text_section_ordering_file)
 +    saved_script_handle = ldlex_input_stack;
  }
-
+ 
  /* Open command file NAME in the current directory, -L directories,
 diff --git a/ld/ldlang.c b/ld/ldlang.c
 index a357f80235f..8a269e29f08 100644
@@ -1118,7 +1118,7 @@ index a357f80235f..8a269e29f08 100644
 @@ -43,6 +43,8 @@
  #include "elf-bfd.h"
  #include "bfdver.h"
-
+ 
 +#include "ld-and-gold-sect-alignment-tab.h"
 +
  #if BFD_SUPPORTS_PLUGINS
@@ -1127,18 +1127,18 @@ index a357f80235f..8a269e29f08 100644
 @@ -2645,8 +2647,9 @@ lang_add_section (lang_statement_list_type *ptr,
    lang_input_section_type *new_section;
    bfd *abfd = link_info.output_bfd;
-
+ 
 -  if (wont_add_section_p (section, output))
 +  if (wont_add_section_p (section, output)) {
      return;
 +  }
-
+ 
    if (sflag_info)
      {
 @@ -2710,6 +2713,16 @@ lang_add_section (lang_statement_list_type *ptr,
    if (output->bfd_section == NULL)
      init_os (output, flags);
-
+ 
 +  unsigned ldg_alignment_power = ld_and_gold_tab_find (section->name);
 +  if (ldg_alignment_power != LD_AND_GOLD_BAD_ALIGN_POW
 +      && ldg_alignment_power < 32)
@@ -1156,20 +1156,20 @@ index a357f80235f..8a269e29f08 100644
    /* FIXME: This is intended to skip ARM mapping symbols,
       which for some reason are not excluded by bfd_is_local_label,
       but maybe it is wrong for other architectures.
--     It would be better to fix bfd_is_local_label.  */
+-     It would be better to fix bfd_is_local_label.  */  
 +     It would be better to fix bfd_is_local_label.  */
    if (*name == '$')
      return false;
-
+ 
    /* Some local symbols, eg _GLOBAL_OFFSET_TABLE_, are present
       in the hash table, so do not print duplicates here.  */
    struct bfd_link_hash_entry * h;
--  h = bfd_link_hash_lookup (link_info.hash, name, false /* create */,
+-  h = bfd_link_hash_lookup (link_info.hash, name, false /* create */, 
 +  h = bfd_link_hash_lookup (link_info.hash, name, false /* create */,
  			    false /* copy */, true /* follow */);
    if (h == NULL)
      return true;
--
+-  
 +
    /* Symbols from the plugin owned BFD will not get their own
       iteration of this function, but can be on the link_info
@@ -1178,7 +1178,7 @@ index a357f80235f..8a269e29f08 100644
  		{
  		  asymbol *     sym = symbol_table[j];
  		  bfd_vma       sym_addr = sym->value + i->output_section->vma;
--
+-		  
 +
  		  if (sym->section == i->output_section
  		      && (sym->flags & BSF_LOCAL) != 0
@@ -1187,7 +1187,7 @@ index a357f80235f..8a269e29f08 100644
  	    case 'n': c = '\n'; break;
  	    case 'r': c = '\r'; break;
  	    case 't': c = '\t'; break;
--
+-	  
 +
  	    case '0':
  	    case '1':
@@ -1211,7 +1211,7 @@ index 06ac2c64fa8..5297d9023f1 100644
 @@ -44,6 +44,8 @@
  #include "plugin-api.h"
  #endif /* BFD_SUPPORTS_PLUGINS */
-
+ 
 +#include "ld-and-gold-sect-alignment-tab.h"
 +
  /* Somewhere above, sys/stat.h got included.  */
@@ -1220,7 +1220,7 @@ index 06ac2c64fa8..5297d9023f1 100644
 @@ -615,6 +617,8 @@ main (int argc, char **argv)
  	}
      }
-
+ 
 +  ld_and_gold_tab_drop ();
 +
    if (config.stats)
@@ -1230,7 +1230,7 @@ index 06ac2c64fa8..5297d9023f1 100644
        argv[1] = "undefined-symbol";
        argv[2] = (char *) name;
        argv[3] = NULL;
--
+-      
 +
        if (verbose)
  	einfo (_("%P: About to run error handling script '%s' with arguments: '%s' '%s'\n"),
@@ -1239,7 +1239,7 @@ index 06ac2c64fa8..5297d9023f1 100644
  	 carry on to issue the normal error message.  */
      }
  #endif /* SUPPORT_ERROR_HANDLING_SCRIPT */
--
+-  
 +
    if (section != NULL)
      {
@@ -1259,7 +1259,7 @@ index fe8722313fe..dfb7b7ed225 100644
 @@ -58,6 +59,7 @@
  #define	S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
  #endif
-
+ 
 +
  static void set_default_dirlist (char *);
  static void set_section_start (char *, char *);
@@ -1284,7 +1284,7 @@ index fe8722313fe..dfb7b7ed225 100644
    struct option *longopts;
 @@ -799,7 +805,33 @@ parse_args (unsigned argc, char **argv)
  	continue;
-
+ 
        if (optc == -1)
 -	break;
 +	{
@@ -1314,7 +1314,7 @@ index fe8722313fe..dfb7b7ed225 100644
 +	    }
 +	  break;
 +	}
-
+ 
        switch (optc)
  	{
 @@ -1156,6 +1188,7 @@ parse_args (unsigned argc, char **argv)
@@ -1420,7 +1420,7 @@ index 6edc908a2a0..bf8520ebab3 100644
 +++ b/ld/scripttempl/elf32msp430.sc
 @@ -163,6 +163,7 @@ SECTIONS
      *(.lower.text.* .lower.text)
-
+ 
      . = ALIGN(2);}
 +    ${RELOCATING+INCLUDE config.text_section_ordering_file}
      *(.text)
@@ -1474,7 +1474,7 @@ index f1b8a69d090..81853dd41ab 100644
 --- a/ld/scripttempl/elfarcv2.sc
 +++ b/ld/scripttempl/elfarcv2.sc
 @@ -188,6 +188,7 @@ SECTIONS
-
+ 
      /* Remaining code.  */
      ${RELOCATING+ . = ALIGN(4);}
 +    ${RELOCATING+INCLUDE config.text_section_ordering_file}
@@ -1512,7 +1512,7 @@ index ea4321ceeb0..28c1afe19e3 100644
 @@ -318,6 +318,7 @@ SECTIONS
      /* Put startup code at beginning so that _start keeps same address.  */
      ${RELOCATING+${STARTUP_CODE}}
-
+ 
 +    ${RELOCATING+INCLUDE config.text_section_ordering_file}
      *(.text)
      ${RELOCATING+*(.text.*)}
@@ -1524,7 +1524,7 @@ index a5a623b5f06..6546da5adb8 100644
 @@ -317,6 +317,7 @@ SECTIONS
      /* Put startup code at beginning so that _start keeps same address.  */
      ${RELOCATING+${STARTUP_CODE}}
-
+ 
 +    ${RELOCATING+INCLUDE config.text_section_ordering_file}
      *(.text)
      ${RELOCATING+*(.text.*)}
@@ -1536,7 +1536,7 @@ index c09b3f7d7a3..5165c15250b 100644
 @@ -303,6 +303,7 @@ SECTIONS
      /* Put startup code at beginning so that _start keeps same address.  */
      ${RELOCATING+${STARTUP_CODE}}
-
+ 
 +    ${RELOCATING+INCLUDE config.text_section_ordering_file}
      *(.text)
      ${RELOCATING+*(.text.*)}
@@ -1546,7 +1546,7 @@ index 5121c5df3a7..93266e8f102 100644
 --- a/ld/scripttempl/elfmicroblaze.sc
 +++ b/ld/scripttempl/elfmicroblaze.sc
 @@ -79,6 +79,7 @@ SECTIONS
-
+ 
    ${RELOCATING+ _ftext  =  .;}
    .text : {
 +    ${RELOCATING+INCLUDE config.text_section_ordering_file}
@@ -1560,7 +1560,7 @@ index 2655e8924f7..3dab6db58c9 100644
 @@ -317,6 +317,7 @@ SECTIONS
      /* Put startup code at beginning so that _start keeps same address.  */
      ${RELOCATING+${STARTUP_CODE}}
-
+ 
 +    ${RELOCATING+INCLUDE config.text_section_ordering_file}
      *(.text)
      ${RELOCATING+*(.text.*)}
@@ -1571,7 +1571,7 @@ index 7c71525cbeb..038a361c954 100644
 +++ b/ld/scripttempl/elfxtensa.sc
 @@ -418,6 +418,7 @@ cat <<EOF
      ${RELOCATING+${INIT_END}}
-
+ 
      ${RELOCATING+${TEXT_START_SYMBOLS}}
 +    ${RELOCATING+INCLUDE config.text_section_ordering_file}
      *(.literal .text .stub${RELOCATING+ .literal.* .text.* .gnu.linkonce.literal.* .gnu.linkonce.t.*.literal .gnu.linkonce.t.*})
@@ -1656,7 +1656,7 @@ index 746fb1a062b..305cd816e94 100644
 @@ -30,6 +30,7 @@ SECTIONS
      ${RELOCATING+ KEEP (*(SORT_NONE(.init)))}
      ${RELOCATING+ PROVIDE (_init_end = .);}
-
+ 
 +    ${RELOCATING+INCLUDE config.text_section_ordering_file}
      *(.text)
      ${RELOCATING+*(.text.*)}
@@ -1710,7 +1710,7 @@ index 3ff86bc61c7..d4d79cbcf82 100644
 +++ b/ld/scripttempl/pru.sc
 @@ -110,6 +110,7 @@ SECTIONS
      ${RELOCATING+KEEP (*(.init0))}
-
+ 
      ${RELOCATING+. = ALIGN(4);}
 +    ${RELOCATING+INCLUDE config.text_section_ordering_file}
      *(.text)
@@ -1721,31 +1721,31 @@ index 3de6bdd2ef5..c5a02da86f4 100644
 --- a/ld/scripttempl/v850.sc
 +++ b/ld/scripttempl/v850.sc
 @@ -76,6 +76,7 @@ SECTIONS
-
+ 
    .text		:
    {
 +    ${RELOCATING+INCLUDE config.text_section_ordering_file}
      *(.text)
      ${RELOCATING+*(.text.*)}
-
+ 
 diff --git a/ld/scripttempl/v850_rh850.sc b/ld/scripttempl/v850_rh850.sc
 index 2c70914c119..682868b1252 100644
 --- a/ld/scripttempl/v850_rh850.sc
 +++ b/ld/scripttempl/v850_rh850.sc
 @@ -80,6 +80,7 @@ SECTIONS
-
+ 
    .text		:
    {
 +    ${RELOCATING+INCLUDE config.text_section_ordering_file}
      *(.text)
      ${RELOCATING+*(.text.*)}
-
+ 
 diff --git a/ld/scripttempl/visium.sc b/ld/scripttempl/visium.sc
 index d11dafd7157..69a39a4e795 100644
 --- a/ld/scripttempl/visium.sc
 +++ b/ld/scripttempl/visium.sc
 @@ -67,6 +67,7 @@ SECTIONS
-
+ 
    .text ${RELOCATING-0} : {
      ${RELOCATING+ _ftext  =  .;}
 +    ${RELOCATING+INCLUDE config.text_section_ordering_file}
@@ -1825,5 +1825,6 @@ index 00000000000..c106034cf33
 +	.globl	yyy
 +yyy:
 +	.byte 0
---
+-- 
 2.34.1
+
