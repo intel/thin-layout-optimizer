@@ -334,7 +334,7 @@ main(int argc, char ** argv) {
                 // Help
             case 0:
                 usage(argv[0]);
-                return 1;
+                return 0;
 
                 // perf
             case 1:
