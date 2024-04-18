@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.1.3)
-project(HFSort C CXX)
+project(HFSort
+  VERSION 0.0.1
+  DESCRIPTION "A unit testing framework for C/C++"
+  LANGUAGES C CXX
+)
 
 SET(CMAKE_FIND_PACKAGE_SORT_DIRECTION DEC)
 
@@ -199,3 +203,7 @@ if(FOUND_GTEST)
 endif()
 
 include(cmake/static-analysis-1.cmake)
+
+# Install helpers
+include(GNUInstallDirs)
+install(TARGETS ${HFSORT_EXE})
