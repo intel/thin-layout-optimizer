@@ -237,7 +237,7 @@ be consumed by the script
           will align the functions that are in the 99% percentile of
           number of incoming calls to 32 bytes.
         - The `--align-till` option species we want to add
-          `--alignment` to functions untill we account of N percentage
+          `--alignment` to functions until we account of N percentage
           of total calls.  I.e if `--align-till=33` and
           `--alignment=12`, we will keep aligning functions to 4096
           bytes until 33% of the total incoming edges have been
