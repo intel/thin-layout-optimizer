@@ -1,0 +1,253 @@
+From 46ffeddc53287eeda0f93a5a8a92f02d4d3ad94b Mon Sep 17 00:00:00 2001
+From: Noah Goldstein <goldstein.w.n@gmail.com>
+Date: Mon, 22 Apr 2024 18:07:23 -0500
+Subject: gold: Implement support for '--section-ordering-map'
+
+---
+ gold/gold.cc       |  2 +-
+ gold/layout.cc     | 19 ++++++++++++----
+ gold/layout.h      |  2 +-
+ gold/main.cc       |  7 ++++--
+ gold/output.cc     |  2 +-
+ gold/parameters.cc | 54 ++++++++++++++++++++++++++++++++++++++++++++++
+ gold/parameters.h  | 23 ++++++++++++++++++++
+ 7 files changed, 100 insertions(+), 9 deletions(-)
+
+diff --git a/gold/gold.cc b/gold/gold.cc
+index 9fcb1f272d6..c1a6f448d28 100644
+--- a/gold/gold.cc
++++ b/gold/gold.cc
+@@ -568,7 +568,7 @@ queue_middle_tasks(const General_options& options,
+      also specified, do not do anything here.  */
+   if (parameters->options().has_plugins()
+       && layout->is_section_ordering_specified()
+-      && !parameters->options().section_ordering_file ())
++      && !parameters->get_section_ordering_file ())
+     {
+       for (Layout::Section_list::const_iterator p
+ 	     = layout->section_list().begin();
+diff --git a/gold/layout.cc b/gold/layout.cc
+index b752e4bb64a..7174862acb1 100644
+--- a/gold/layout.cc
++++ b/gold/layout.cc
+@@ -2918,17 +2918,26 @@ Layout::find_section_order_index(const std::string& section_name)
+ // Read the sequence of input sections from the file specified with
+ // option --section-ordering-file.
+ 
+-void
++Exit_status
+ Layout::read_layout_from_file()
+ {
+-  const char* filename = parameters->options().section_ordering_file();
++  const char* filename = parameters->get_section_ordering_file();
++  bool mayfail = parameters->options().section_ordering_file () != NULL;
+   std::ifstream in;
+   std::string line;
+ 
+   in.open(filename);
+   if (!in)
+-    gold_fatal(_("unable to open --section-ordering-file file %s: %s"),
+-	       filename, strerror(errno));
++    {
++      if (mayfail)
++	{
++	  gold_fatal (_ ("unable to open --section-ordering-file file %s: %s"),
++		      filename, strerror (errno));
++	}
++      return GOLD_ERR;
++    }
++
++  gold_debug (DEBUG_FILES, "Using section ordering file %s", filename);
+ 
+   File_read::record_file_read(filename);
+ 
+@@ -2972,6 +2981,8 @@ Layout::read_layout_from_file()
+       position++;
+       std::getline(in, line);
+     }
++
++  return GOLD_OK;
+ }
+ 
+ // Finalize the layout.  When this is called, we have created all the
+diff --git a/gold/layout.h b/gold/layout.h
+index 040c98cd9aa..e7a05f564ed 100644
+--- a/gold/layout.h
++++ b/gold/layout.h
+@@ -617,7 +617,7 @@ class Layout
+ 
+   // Read the sequence of input sections from the file specified with
+   // linker option --section-ordering-file.
+-  void
++  Exit_status
+   read_layout_from_file();
+ 
+   // Layout an input reloc section when doing a relocatable link.  The
+diff --git a/gold/main.cc b/gold/main.cc
+index c6aa1901a95..edc2001f611 100644
+--- a/gold/main.cc
++++ b/gold/main.cc
+@@ -174,6 +174,8 @@ main(int argc, char** argv)
+   // Store some options in the globally accessible parameters.
+   set_parameters_options(&command_line.options());
+ 
++  set_parameters_section_ordering_file_from_map();
++
+   // Do this as early as possible (since it prints a welcome message).
+   write_debug_script(command_line.options().output_file_name(),
+                      program_name, args.c_str());
+@@ -232,8 +234,9 @@ main(int argc, char** argv)
+   if (layout.incremental_inputs() != NULL)
+     layout.incremental_inputs()->report_command_line(argc, argv);
+ 
+-  if (parameters->options().section_ordering_file())
+-    layout.read_layout_from_file();
++  if (parameters->get_section_ordering_file())
++    if (layout.read_layout_from_file() == GOLD_ERR)
++      set_parameters_section_ordering_file_failure();
+ 
+   // Load plugin libraries.
+   if (command_line.options().has_plugins())
+diff --git a/gold/output.cc b/gold/output.cc
+index a1978eb5f32..31be6270680 100644
+--- a/gold/output.cc
++++ b/gold/output.cc
+@@ -2532,7 +2532,7 @@ Output_section::add_input_section(Layout* layout,
+       /* If section ordering is requested by specifying a ordering file,
+ 	 using --section-ordering-file, match the section name with
+ 	 a pattern.  */
+-      if (parameters->options().section_ordering_file())
++      if (parameters->get_section_ordering_file())
+ 	{
+ 	  unsigned int section_order_index =
+ 	    layout->find_section_order_index(std::string(secname));
+diff --git a/gold/parameters.cc b/gold/parameters.cc
+index 90bc4db8d46..193a057a31e 100644
+--- a/gold/parameters.cc
++++ b/gold/parameters.cc
+@@ -26,6 +26,7 @@
+ #include "options.h"
+ #include "target.h"
+ #include "target-select.h"
++#include "ld-and-gold-env-scripts.h"
+ 
+ namespace gold
+ {
+@@ -231,6 +232,51 @@ Parameters::check_rodata_segment()
+     gold_error(_("-Trodata-segment is meaningless without --rosegment"));
+ }
+ 
++// Set the section_ordering_file using '--section-ordering-map' if the
++// user-option '--section-ordering-file' wasn't specified.
++void
++Parameters::set_section_ordering_file_from_map()
++{
++  const char *ret;
++  // If we already had a failure, nothing to do.
++  if (this->section_ordering_file_has_failed_)
++    return;
++
++  // Read filepath from environment.
++  ret = ld_and_gold_get_ordering_script (
++      0, this->options ().section_ordering_file (),
++      this->options ().section_ordering_map (),
++      this->options ().output_file_name (),
++      parameters->target_valid () ? parameters->target ().machine_code_name ()
++				  : NULL);
++
++  // If not set (or error), indicate we should stop trying to return.
++  if (ret == NULL)
++    {
++      this->section_ordering_file_has_failed_ = true;
++      return;
++    }
++  // Set map file.
++  this->section_ordering_file_from_map_ = ret;
++}
++
++// Return section_ordering_file, first checking user-option then checking env
++// variable input.
++const char *
++Parameters::get_section_ordering_file() const
++{
++  // If we have user-option return it.
++  if (this->options ().section_ordering_file ())
++    return this->options ().section_ordering_file ();
++
++  // If we had any error then pretend it never existed.
++  if (this->section_ordering_file_has_failed_)
++    return NULL;
++
++  // Finally return env file. This may be NULL if it was never specified.
++  return this->section_ordering_file_from_map_;
++}
++
+ // Return the name of the entry symbol.
+ 
+ const char*
+@@ -282,6 +328,14 @@ Parameters::incremental_update() const
+ 	  || this->incremental_mode_ == General_options::INCREMENTAL_AUTO);
+ }
+ 
++void
++set_parameters_section_ordering_file_failure()
++{ static_parameters.set_section_ordering_file_failure(); }
++
++void
++set_parameters_section_ordering_file_from_map()
++{ static_parameters.set_section_ordering_file_from_map(); }
++
+ void
+ set_parameters_errors(Errors* errors)
+ { static_parameters.set_errors(errors); }
+diff --git a/gold/parameters.h b/gold/parameters.h
+index 76202b186e4..7fd4e7c5035 100644
+--- a/gold/parameters.h
++++ b/gold/parameters.h
+@@ -176,6 +176,21 @@ class Parameters
+   bool
+   incremental_update() const;
+ 
++  // Get section_ordering_file. This first tries the user-option from
++  // '--section-ordering-file' or '--section-ordering-map'.
++  const char *get_section_ordering_file() const;
++
++  // Only relevent if we are using the env variable section_ordering_file. It
++  // indicates we failed doing IO on the file, so we want to pretend it never
++  // existed.
++  void
++  set_section_ordering_file_failure()
++  {
++    this->section_ordering_file_has_failed_ = true;
++  }
++
++  void set_section_ordering_file_from_map();
++
+  private:
+   void
+   set_target_once(Target*);
+@@ -197,6 +212,8 @@ class Parameters
+   int debug_;
+   int incremental_mode_;
+   Set_parameters_target_once* set_parameters_target_once_;
++  const char *section_ordering_file_from_map_ = NULL;
++  bool section_ordering_file_has_failed_ = false;
+ };
+ 
+ // This is a global variable.
+@@ -205,6 +222,12 @@ extern const Parameters* parameters;
+ // We use free functions for these since they affect a global variable
+ // that is internal to parameters.cc.
+ 
++extern void
++set_parameters_section_ordering_file_failure();
++
++extern void
++set_parameters_section_ordering_file_from_map();
++
+ extern void
+ set_parameters_errors(Errors* errors);
+ 
+-- 
+2.34.1
+

@@ -1,0 +1,310 @@
+From 7027de6e4946a81bdb750cc33e1cb2392d40a03f Mon Sep 17 00:00:00 2001
+From: Noah Goldstein <goldstein.w.n@gmail.com>
+Date: Mon, 22 Apr 2024 17:27:52 -0500
+Subject: ld: Implement support for '--text-section-ordering-map'
+
+---
+ include/ld-and-gold-env-scripts.h | 241 ++++++++++++++++++++++++++++++
+ ld/lexsup.c                       |  17 ++-
+ 2 files changed, 257 insertions(+), 1 deletion(-)
+ create mode 100644 include/ld-and-gold-env-scripts.h
+
+diff --git a/include/ld-and-gold-env-scripts.h b/include/ld-and-gold-env-scripts.h
+new file mode 100644
+index 00000000000..72ca5689e40
+--- /dev/null
++++ b/include/ld-and-gold-env-scripts.h
+@@ -0,0 +1,241 @@
++#ifndef BINUTILS_D_INCLUDE_D_LD_AND_GOLD_ENV_SCRIPTS_H_
++#define BINUTILS_D_INCLUDE_D_LD_AND_GOLD_ENV_SCRIPTS_H_
++
++#include <stddef.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++#include <ctype.h>
++
++/* Find where the ".so" starts in a dso. If ".so" exists return offset to the
++ * 'o'. Otherwise return 0.  */
++static size_t
++ld_and_gold_dso_find_so (const char *dso, size_t dso_len)
++{
++  for (; dso_len > 2U; --dso_len)
++    {
++      if (dso[dso_len] == 'o' && dso[dso_len - 1] == 's'
++	  && dso[dso_len - 2] == '.')
++	{
++	  return dso_len;
++	}
++    }
++  return 0;
++}
++
++/* Returns true if two dsos match. If both dsos are shared libraries it will
++ * only match up to the last ".so".  */
++static int
++ld_and_gold_dso_matches (const char *dso0, size_t dso_len0, const char *dso1,
++			 size_t dso_len1)
++{
++  size_t len0 = ld_and_gold_dso_find_so (dso0, dso_len0);
++  if (len0 != 0)
++    {
++      size_t len1 = ld_and_gold_dso_find_so (dso1, dso_len1);
++      if (len0 == len1)
++	{
++	  return memcmp (dso0, dso1, len0) == 0;
++	}
++    }
++  return dso_len0 == dso_len1 && memcmp (dso0, dso1, dso_len0) == 0;
++}
++
++static int
++ld_and_gold_process_ordering_script_from_map (char *linker_script, int is_ld)
++{
++  char *linker_script_end = NULL;
++  if (linker_script == NULL)
++    {
++      return -1;
++    }
++
++  linker_script_end = linker_script + strlen (linker_script) - 1;
++  while (linker_script_end > linker_script
++	 && (*linker_script_end == '\n' || *linker_script_end == ' '
++	     || *linker_script_end == '\t'))
++    {
++      *linker_script_end = '\0';
++      --linker_script_end;
++    }
++  if (access (linker_script, F_OK) != 0)
++    {
++      return -1;
++    }
++
++  (void) is_ld;
++  return 0;
++}
++
++static char *
++ld_and_gold_get_ordering_script_from_map (const char *output_dso,
++					  const char *target_name,
++					  const char *linker_script_map_in)
++{
++  char *line = NULL;
++  size_t line_sz = 0;
++  FILE *fp = NULL;
++  const char *output_dso_basename = NULL;
++  const char *output_dso_end = NULL;
++  size_t output_dso_len = 0;
++  size_t target_len = 0;
++  int target_okay = 0;
++  char *linker_script = NULL;
++  if (output_dso == NULL)
++    {
++      return NULL;
++    }
++
++  fp = fopen (linker_script_map_in, "r");
++  if (fp == NULL)
++    {
++      return NULL;
++    }
++
++  output_dso_len = strlen (output_dso);
++  output_dso_end = output_dso + output_dso_len;
++
++  output_dso_basename = output_dso_end;
++  while (output_dso_basename != output_dso && (*output_dso_basename) != '/')
++    {
++      --output_dso_basename;
++    }
++  if ((*output_dso_basename) == '/')
++    {
++      ++output_dso_basename;
++    }
++  output_dso_len = output_dso_end - output_dso_basename;
++
++  if (target_name != NULL)
++    {
++      target_len = strlen (target_name);
++    }
++  /* Default to accepting. If we reach a 'target:*' line then we start
++   * filtering.  */
++  target_okay = 1;
++  for (;;)
++    {
++      char *end_dso, *cur_line;
++      ssize_t nread_s;
++      size_t nread;
++      nread_s = getline (&line, &line_sz, fp);
++      if (nread_s < 0)
++	{
++	  if (line != NULL)
++	    {
++	      free (line);
++	    }
++	  break;
++	}
++
++      nread = nread_s;
++      cur_line = line;
++      while (nread > 0 && (cur_line[0] == ' ' || cur_line[0] == '\t'))
++	{
++	  --nread;
++	  ++cur_line;
++	}
++
++      if (target_len != 0 && nread > strlen ("target:")
++	  && memcmp (cur_line, "target:", strlen ("target:")) == 0)
++	{
++	  target_okay = 0;
++	  nread -= strlen ("target:");
++	  cur_line += strlen ("target:");
++
++	  for (;;)
++	    {
++	      char *next_target;
++	      while (nread > 0 && (cur_line[0] == ' ' || cur_line[0] == '\t'))
++		{
++		  --nread;
++		  ++cur_line;
++		}
++	      next_target = (char *) memchr (cur_line, ',', nread);
++	      if (next_target == NULL)
++		{
++		  next_target = (char *) memchr (cur_line, '\n', nread);
++		  if (next_target == NULL)
++		    {
++		      break;
++		    }
++		}
++	      if ((size_t) (next_target - cur_line) == target_len
++		  && memcmp (cur_line, target_name, target_len) == 0)
++		{
++		  target_okay = 1;
++		  break;
++		}
++	      if (cur_line + nread <= (next_target + 1))
++		{
++		  break;
++		}
++	      nread -= (ssize_t) ((next_target + 1) - cur_line);
++	      cur_line = next_target + 1;
++	    }
++	  continue;
++	}
++
++      if (!target_okay)
++	{
++	  continue;
++	}
++
++      end_dso = (char *) memchr (cur_line, ' ', nread);
++      if (end_dso == NULL)
++	{
++	  continue;
++	}
++
++      *end_dso = '\0';
++      if (ld_and_gold_dso_matches (cur_line, end_dso - cur_line,
++				   output_dso_basename, output_dso_len))
++	{
++	  do
++	    {
++	      ++end_dso;
++	    }
++	  while ((*end_dso) == ' ');
++	  /* We end up leaking memory allocated for line. Its a very
++	   * bounded amount we make leak so probably okay.  */
++	  linker_script = end_dso;
++	  break;
++	}
++    }
++
++  fclose (fp);
++  return linker_script;
++}
++
++/* Try to read input linker-script or gold section-ordering-file from env 1. an
++ * env variable and 2. a map of DSO -> scripts if env variable (1) doesn't
++ * exist. Only takes affect if normal commandline arguments not present. */
++static char *
++ld_and_gold_get_ordering_script (int is_ld, const char *file_linker_script_in,
++				 const char *file_linker_script_map_in,
++				 const char *output_dso,
++				 const char *target_name)
++{
++  char *linker_script = NULL;
++  if (file_linker_script_in != NULL)
++    {
++      linker_script = strdup (file_linker_script_in);
++    }
++  else if (file_linker_script_map_in != NULL)
++    {
++      linker_script = ld_and_gold_get_ordering_script_from_map (
++	  output_dso, target_name, file_linker_script_map_in);
++    }
++
++  if (linker_script == NULL)
++    {
++      return NULL;
++    }
++
++  return ld_and_gold_process_ordering_script_from_map (linker_script, is_ld)
++	     ? NULL
++	     : linker_script;
++}
++
++#endif
+diff --git a/ld/lexsup.c b/ld/lexsup.c
+index 82ef0a2641d..8e15ed3514f 100644
+--- a/ld/lexsup.c
++++ b/ld/lexsup.c
+@@ -41,6 +41,7 @@
+ #include "ldver.h"
+ #include "ldemul.h"
+ #include "demangle.h"
++#include "ld-and-gold-env-scripts.h"
+ #if BFD_SUPPORTS_PLUGINS
+ #include "plugin.h"
+ #endif /* BFD_SUPPORTS_PLUGINS */
+@@ -645,6 +646,7 @@ parse_args (unsigned argc, char **argv)
+   unsigned i;
+   int is, il, irl;
+   int ingroup = 0;
++  char *output_dso = NULL;
+   char *default_dirlist = NULL;
+   char *shortopts;
+   char *text_section_ordering_map = NULL;
+@@ -806,7 +808,19 @@ parse_args (unsigned argc, char **argv)
+ 	continue;
+ 
+       if (optc == -1)
+-	break;
++	{
++	  char *ordering_script = NULL;
++	  ordering_script = ld_and_gold_get_ordering_script (
++	      1, config.text_section_ordering_file, text_section_ordering_map,
++	      output_dso, ldemul_emulation_name ());
++
++	  if (verbose)
++	    info_msg ("Using ordering script: %s\n\tArg: %s\n\tMap: %s\n",
++		      ordering_script, config.text_section_ordering_file,
++		      text_section_ordering_map);
++	  config.text_section_ordering_file = ordering_script;
++	  break;
++	}
+ 
+       switch (optc)
+ 	{
+@@ -1163,6 +1177,7 @@ parse_args (unsigned argc, char **argv)
+ 	  link_info.optimize = strtoul (optarg, NULL, 0) != 0;
+ 	  break;
+ 	case 'o':
++	  output_dso = optarg;
+ 	  lang_add_output (optarg, 0);
+ 	  break;
+ 	case OPTION_OFORMAT:
+-- 
+2.34.1
+

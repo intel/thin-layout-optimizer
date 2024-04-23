@@ -1,0 +1,59 @@
+From 50c0503d665b69f8dae0a1677a862f1793bd36f1 Mon Sep 17 00:00:00 2001
+From: Noah Goldstein <goldstein.w.n@gmail.com>
+Date: Mon, 22 Apr 2024 16:29:26 -0500
+Subject: ld: Add commandline support for '--text-section-ordering-map'
+
+Mapfile is used to find the '--text-section-ordering-file' for a given
+target dso.
+---
+ ld/ldlex.h  | 1 +
+ ld/lexsup.c | 7 +++++++
+ 2 files changed, 8 insertions(+)
+
+diff --git a/ld/ldlex.h b/ld/ldlex.h
+index 78009dc1bda..367dc622044 100644
+--- a/ld/ldlex.h
++++ b/ld/ldlex.h
+@@ -69,6 +69,7 @@ enum option_values
+   OPTION_TBSS,
+   OPTION_TDATA,
+   OPTION_TEXT_SECTION_ORDERING_FILE,
++  OPTION_TEXT_SECTION_ORDERING_MAP,
+   OPTION_TTEXT,
+   OPTION_TTEXT_SEGMENT,
+   OPTION_TRODATA_SEGMENT,
+diff --git a/ld/lexsup.c b/ld/lexsup.c
+index 5fd37012efc..82ef0a2641d 100644
+--- a/ld/lexsup.c
++++ b/ld/lexsup.c
+@@ -487,6 +487,9 @@ static const struct ld_option ld_options[] =
+   { {"text-section-ordering-file", required_argument, NULL, OPTION_TEXT_SECTION_ORDERING_FILE},
+     '\0', N_("FILE"),
+     N_("Sort text sections by FILE"), TWO_DASHES },
++  { {"text-section-ordering-map", required_argument, NULL, OPTION_TEXT_SECTION_ORDERING_MAP},
++    '\0', N_("FILE"),
++    N_("Lookup text-section-ordering-file in FILE"), TWO_DASHES },
+   { {"spare-dynamic-tags", required_argument, NULL, OPTION_SPARE_DYNAMIC_TAGS},
+     '\0', N_("COUNT"), N_("How many tags to reserve in .dynamic section"),
+     TWO_DASHES },
+@@ -644,6 +647,7 @@ parse_args (unsigned argc, char **argv)
+   int ingroup = 0;
+   char *default_dirlist = NULL;
+   char *shortopts;
++  char *text_section_ordering_map = NULL;
+   struct option *longopts;
+   struct option *really_longopts;
+   int last_optind;
+@@ -1369,6 +1373,9 @@ parse_args (unsigned argc, char **argv)
+ 	case OPTION_TEXT_SECTION_ORDERING_FILE:
+ 	  config.text_section_ordering_file = optarg;
+ 	  break;
++	case OPTION_TEXT_SECTION_ORDERING_MAP:
++	  text_section_ordering_map = optarg;
++	  break;
+ 	case OPTION_STATS:
+ 	  config.stats = true;
+ 	  break;
+-- 
+2.34.1
+

@@ -1,0 +1,574 @@
+From 639633376136ca5e1031a3960927bb13f0213557 Mon Sep 17 00:00:00 2001
+From: Noah Goldstein <goldstein.w.n@gmail.com>
+Date: Mon, 22 Apr 2024 16:09:46 -0500
+Subject: ld: Add support for '--text-section-ordering-file' to ld
+
+---
+ ld/ld.h                         |  3 +++
+ ld/ldfile.c                     | 21 ++++++++++++++++++++-
+ ld/ldlex.h                      |  1 +
+ ld/lexsup.c                     |  6 ++++++
+ ld/scripttempl/arclinux.sc      |  5 +++--
+ ld/scripttempl/avr.sc           |  1 +
+ ld/scripttempl/dlx.sc           |  1 +
+ ld/scripttempl/elf.sc           |  1 +
+ ld/scripttempl/elf32cr16.sc     |  1 +
+ ld/scripttempl/elf32crx.sc      |  1 +
+ ld/scripttempl/elf32msp430.sc   |  1 +
+ ld/scripttempl/elf64bpf.sc      |  5 +++--
+ ld/scripttempl/elf64hppa.sc     |  1 +
+ ld/scripttempl/elfarc.sc        |  1 +
+ ld/scripttempl/elfarcv2.sc      |  1 +
+ ld/scripttempl/elfd10v.sc       |  1 +
+ ld/scripttempl/elfd30v.sc       |  1 +
+ ld/scripttempl/elfm68hc11.sc    |  1 +
+ ld/scripttempl/elfm68hc12.sc    |  1 +
+ ld/scripttempl/elfm9s12z.sc     |  1 +
+ ld/scripttempl/elfmicroblaze.sc |  1 +
+ ld/scripttempl/elfxgate.sc      |  1 +
+ ld/scripttempl/elfxtensa.sc     |  1 +
+ ld/scripttempl/ft32.sc          |  1 +
+ ld/scripttempl/i386beos.sc      |  1 +
+ ld/scripttempl/i386go32.sc      |  1 +
+ ld/scripttempl/iq2000.sc        |  1 +
+ ld/scripttempl/mcorepe.sc       |  1 +
+ ld/scripttempl/mep.sc           |  1 +
+ ld/scripttempl/mmo.sc           |  1 +
+ ld/scripttempl/nds32elf.sc      |  5 +++--
+ ld/scripttempl/pe.sc            |  1 +
+ ld/scripttempl/pep.sc           |  1 +
+ ld/scripttempl/pru.sc           |  1 +
+ ld/scripttempl/v850.sc          |  1 +
+ ld/scripttempl/v850_rh850.sc    |  1 +
+ ld/scripttempl/visium.sc        |  1 +
+ ld/scripttempl/xstormy16.sc     |  1 +
+ 38 files changed, 70 insertions(+), 7 deletions(-)
+
+diff --git a/ld/ld.h b/ld/ld.h
+index a0f8a15c7a9..f590d7de95e 100644
+--- a/ld/ld.h
++++ b/ld/ld.h
+@@ -313,6 +313,9 @@ typedef struct
+ 
+   /* Compress DWARF debug sections.  */
+   enum compressed_debug_section_type compress_debug;
++
++  /* The optional text section ordering file.  */
++  const char *text_section_ordering_file;
+ } ld_config_type;
+ 
+ extern ld_config_type config;
+diff --git a/ld/ldfile.c b/ld/ldfile.c
+index df7c9cbd65e..c4ec50bd998 100644
+--- a/ld/ldfile.c
++++ b/ld/ldfile.c
+@@ -891,6 +891,7 @@ ldfile_open_command_file_1 (const char *name, enum script_open_style open_how)
+   static struct script_name_list *processed_scripts = NULL;
+   struct script_name_list *script;
+   size_t len;
++  bool use_text_section_ordering_file = false;
+ 
+   /* PR 24576: Catch the case where the user has accidentally included
+      the same linker script twice.  */
+@@ -905,6 +906,23 @@ ldfile_open_command_file_1 (const char *name, enum script_open_style open_how)
+ 	}
+     }
+ 
++  if (strcmp (name, "config.text_section_ordering_file") == 0)
++    {
++      /* Support
++
++	 INCLUDE config.text_section_ordering_file;
++
++	 in input text sections in linker script.  */
++      if (config.text_section_ordering_file == NULL)
++	{
++	  lex_push_file (NULL, name, false);
++	  return;
++	}
++
++      name = config.text_section_ordering_file;
++      use_text_section_ordering_file = true;
++    }
++
+   /* FIXME: This memory is never freed, but that should not really matter.
+      It will be released when the linker exits, and it is unlikely to ever
+      be more than a few tens of bytes.  */
+@@ -931,7 +949,8 @@ ldfile_open_command_file_1 (const char *name, enum script_open_style open_how)
+ 
+   lineno = 1;
+ 
+-  saved_script_handle = ldlex_input_stack;
++  if (!use_text_section_ordering_file)
++    saved_script_handle = ldlex_input_stack;
+ }
+ 
+ /* Open command file NAME in the current directory, -L directories,
+diff --git a/ld/ldlex.h b/ld/ldlex.h
+index 87cac02141d..78009dc1bda 100644
+--- a/ld/ldlex.h
++++ b/ld/ldlex.h
+@@ -68,6 +68,7 @@ enum option_values
+   OPTION_TASK_LINK,
+   OPTION_TBSS,
+   OPTION_TDATA,
++  OPTION_TEXT_SECTION_ORDERING_FILE,
+   OPTION_TTEXT,
+   OPTION_TTEXT_SEGMENT,
+   OPTION_TRODATA_SEGMENT,
+diff --git a/ld/lexsup.c b/ld/lexsup.c
+index fe8722313fe..5fd37012efc 100644
+--- a/ld/lexsup.c
++++ b/ld/lexsup.c
+@@ -484,6 +484,9 @@ static const struct ld_option ld_options[] =
+   { {"sort-section", required_argument, NULL, OPTION_SORT_SECTION},
+     '\0', N_("name|alignment"),
+     N_("Sort sections by name or maximum alignment"), TWO_DASHES },
++  { {"text-section-ordering-file", required_argument, NULL, OPTION_TEXT_SECTION_ORDERING_FILE},
++    '\0', N_("FILE"),
++    N_("Sort text sections by FILE"), TWO_DASHES },
+   { {"spare-dynamic-tags", required_argument, NULL, OPTION_SPARE_DYNAMIC_TAGS},
+     '\0', N_("COUNT"), N_("How many tags to reserve in .dynamic section"),
+     TWO_DASHES },
+@@ -1363,6 +1366,9 @@ parse_args (unsigned argc, char **argv)
+ 	    einfo (_("%F%P: invalid section sorting option: %s\n"),
+ 		   optarg);
+ 	  break;
++	case OPTION_TEXT_SECTION_ORDERING_FILE:
++	  config.text_section_ordering_file = optarg;
++	  break;
+ 	case OPTION_STATS:
+ 	  config.stats = true;
+ 	  break;
+diff --git a/ld/scripttempl/arclinux.sc b/ld/scripttempl/arclinux.sc
+index 20429df45a8..aa65dcac4b2 100644
+--- a/ld/scripttempl/arclinux.sc
++++ b/ld/scripttempl/arclinux.sc
+@@ -487,11 +487,12 @@ cat <<EOF
+   .text         ${RELOCATING-0} :
+   {
+     ${RELOCATING+${TEXT_START_SYMBOLS}}
+-    ${RELOCATING+*(.text.unlikely .text.*_unlikely .text.unlikely.*)}
+-    ${RELOCATING+*(.text.exit .text.exit.*)}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     ${RELOCATING+*(.text.startup .text.startup.*)}
+     ${RELOCATING+*(.text.hot .text.hot.*)}
+     ${RELOCATING+*(SORT(.text.sorted.*))}
++    ${RELOCATING+*(.text.unlikely .text.*_unlikely .text.unlikely.*)}
++    ${RELOCATING+*(.text.exit .text.exit.*)}
+     *(.text .stub${RELOCATING+ .text.* .gnu.linkonce.t.*})
+     /* .gnu.warning sections are handled specially by elf.em.  */
+     *(.gnu.warning)
+diff --git a/ld/scripttempl/avr.sc b/ld/scripttempl/avr.sc
+index 61cccfccde8..8f8f629f8a3 100644
+--- a/ld/scripttempl/avr.sc
++++ b/ld/scripttempl/avr.sc
+@@ -173,6 +173,7 @@ SECTIONS
+     KEEP (*(.init8))
+     *(.init9)  /* Call main().  */
+     KEEP (*(.init9))}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${RELOCATING+. = ALIGN(2);
+     *(.text.*)
+diff --git a/ld/scripttempl/dlx.sc b/ld/scripttempl/dlx.sc
+index 8d7a9d53dab..51bfea42a18 100644
+--- a/ld/scripttempl/dlx.sc
++++ b/ld/scripttempl/dlx.sc
+@@ -22,6 +22,7 @@ SECTIONS
+   .text :
+   {
+     ${RELOCATING+CREATE_OBJECT_SYMBOLS}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${RELOCATING+etext = ${DATA_ALIGNMENT};}
+   }
+diff --git a/ld/scripttempl/elf.sc b/ld/scripttempl/elf.sc
+index 1e3c5aa8504..a181a4ed645 100644
+--- a/ld/scripttempl/elf.sc
++++ b/ld/scripttempl/elf.sc
+@@ -546,6 +546,7 @@ cat <<EOF
+     ${RELOCATING+*(.text.unlikely .text.*_unlikely .text.unlikely.*)}
+     ${RELOCATING+*(.text.exit .text.exit.*)}
+     ${RELOCATING+*(.text.startup .text.startup.*)}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file;}
+     ${RELOCATING+*(.text.hot .text.hot.*)}
+     ${RELOCATING+*(SORT(.text.sorted.*))}
+     *(.text .stub${RELOCATING+ .text.* .gnu.linkonce.t.*})
+diff --git a/ld/scripttempl/elf32cr16.sc b/ld/scripttempl/elf32cr16.sc
+index cefae424656..88d5774252d 100644
+--- a/ld/scripttempl/elf32cr16.sc
++++ b/ld/scripttempl/elf32cr16.sc
+@@ -81,6 +81,7 @@ SECTIONS
+   .text :
+   {
+     __TEXT_START = .;
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text) *(.text.*) *(.gnu.linkonce.t.*)
+     __TEXT_END = .;
+   }${RELOCATING+ > rom}
+diff --git a/ld/scripttempl/elf32crx.sc b/ld/scripttempl/elf32crx.sc
+index 594eaa1f4fb..5ad69243c39 100644
+--- a/ld/scripttempl/elf32crx.sc
++++ b/ld/scripttempl/elf32crx.sc
+@@ -77,6 +77,7 @@ SECTIONS
+   .text :
+   {
+     __TEXT_START = .;
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text) *(.text.*) *(.gnu.linkonce.t.*)
+     __TEXT_END = .;
+   } > rom
+diff --git a/ld/scripttempl/elf32msp430.sc b/ld/scripttempl/elf32msp430.sc
+index 6edc908a2a0..bf8520ebab3 100644
+--- a/ld/scripttempl/elf32msp430.sc
++++ b/ld/scripttempl/elf32msp430.sc
+@@ -163,6 +163,7 @@ SECTIONS
+     *(.lower.text.* .lower.text)
+ 
+     . = ALIGN(2);}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${RELOCATING+. = ALIGN(2);
+     *(.text.*)
+diff --git a/ld/scripttempl/elf64bpf.sc b/ld/scripttempl/elf64bpf.sc
+index 74154585125..6fc84e25726 100644
+--- a/ld/scripttempl/elf64bpf.sc
++++ b/ld/scripttempl/elf64bpf.sc
+@@ -508,11 +508,12 @@ cat <<EOF
+   .text         ${RELOCATING-0} :
+   {
+     ${RELOCATING+${TEXT_START_SYMBOLS}}
+-    ${RELOCATING+*(.text.unlikely .text.*_unlikely .text.unlikely.*)}
+-    ${RELOCATING+*(.text.exit .text.exit.*)}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     ${RELOCATING+*(.text.startup .text.startup.*)}
+     ${RELOCATING+*(.text.hot .text.hot.*)}
+     ${RELOCATING+*(SORT(.text.sorted.*))}
++    ${RELOCATING+*(.text.unlikely .text.*_unlikely .text.unlikely.*)}
++    ${RELOCATING+*(.text.exit .text.exit.*)}
+     *(.text .stub${RELOCATING+ .text.* .gnu.linkonce.t.*})
+     /* .gnu.warning sections are handled specially by elf.em.  */
+     *(.gnu.warning)
+diff --git a/ld/scripttempl/elf64hppa.sc b/ld/scripttempl/elf64hppa.sc
+index e85dd397993..4d06ccdb387 100644
+--- a/ld/scripttempl/elf64hppa.sc
++++ b/ld/scripttempl/elf64hppa.sc
+@@ -412,6 +412,7 @@ cat <<EOF
+   .text         ${RELOCATING-0} :
+   {
+     ${RELOCATING+${TEXT_START_SYMBOLS}}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text .stub${RELOCATING+ .text.* .gnu.linkonce.t.*})
+     /* .gnu.warning sections are handled specially by elf.em.  */
+     *(.gnu.warning)
+diff --git a/ld/scripttempl/elfarc.sc b/ld/scripttempl/elfarc.sc
+index 57cd0a561a0..1d9561cfc62 100644
+--- a/ld/scripttempl/elfarc.sc
++++ b/ld/scripttempl/elfarc.sc
+@@ -288,6 +288,7 @@ cat <<EOF
+   .text         ${RELOCATING-0} :
+   {
+     ${RELOCATING+${TEXT_START_SYMBOLS}}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text .stub${RELOCATING+ .text.* .gnu.linkonce.t.*})
+     /* .gnu.warning sections are handled specially by elf.em.  */
+     *(.gnu.warning)
+diff --git a/ld/scripttempl/elfarcv2.sc b/ld/scripttempl/elfarcv2.sc
+index f1b8a69d090..81853dd41ab 100644
+--- a/ld/scripttempl/elfarcv2.sc
++++ b/ld/scripttempl/elfarcv2.sc
+@@ -188,6 +188,7 @@ SECTIONS
+ 
+     /* Remaining code.  */
+     ${RELOCATING+ . = ALIGN(4);}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text .stub${RELOCATING+ .text.* .gnu.linkonce.t.*})
+     /* .gnu.warning sections are handled specially by elf.em.  */
+     *(.gnu.warning)
+diff --git a/ld/scripttempl/elfd10v.sc b/ld/scripttempl/elfd10v.sc
+index e52aaedeac0..4d6e7469f75 100644
+--- a/ld/scripttempl/elfd10v.sc
++++ b/ld/scripttempl/elfd10v.sc
+@@ -109,6 +109,7 @@ SECTIONS
+     KEEP (*(SORT_NONE(.init.*)))
+     KEEP (*(SORT_NONE(.fini)))
+     KEEP (*(SORT_NONE(.fini.*)))}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${RELOCATING+*(.text.*)}
+     /* .gnu.warning sections are handled specially by elf.em.  */
+diff --git a/ld/scripttempl/elfd30v.sc b/ld/scripttempl/elfd30v.sc
+index 97fafb30764..6a8cd0e1197 100644
+--- a/ld/scripttempl/elfd30v.sc
++++ b/ld/scripttempl/elfd30v.sc
+@@ -125,6 +125,7 @@ SECTIONS
+   /* Internal text space or external memory */
+   .text :
+   {
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${RELOCATING+*(.gnu.linkonce.t*)
+     KEEP (*(SORT_NONE(.fini)))
+diff --git a/ld/scripttempl/elfm68hc11.sc b/ld/scripttempl/elfm68hc11.sc
+index ea4321ceeb0..28c1afe19e3 100644
+--- a/ld/scripttempl/elfm68hc11.sc
++++ b/ld/scripttempl/elfm68hc11.sc
+@@ -318,6 +318,7 @@ SECTIONS
+     /* Put startup code at beginning so that _start keeps same address.  */
+     ${RELOCATING+${STARTUP_CODE}}
+ 
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${RELOCATING+*(.text.*)}
+     /* .gnu.warning sections are handled specially by elf.em.  */
+diff --git a/ld/scripttempl/elfm68hc12.sc b/ld/scripttempl/elfm68hc12.sc
+index a5a623b5f06..6546da5adb8 100644
+--- a/ld/scripttempl/elfm68hc12.sc
++++ b/ld/scripttempl/elfm68hc12.sc
+@@ -317,6 +317,7 @@ SECTIONS
+     /* Put startup code at beginning so that _start keeps same address.  */
+     ${RELOCATING+${STARTUP_CODE}}
+ 
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${RELOCATING+*(.text.*)}
+     /* .gnu.warning sections are handled specially by elf.em.  */
+diff --git a/ld/scripttempl/elfm9s12z.sc b/ld/scripttempl/elfm9s12z.sc
+index c09b3f7d7a3..5165c15250b 100644
+--- a/ld/scripttempl/elfm9s12z.sc
++++ b/ld/scripttempl/elfm9s12z.sc
+@@ -303,6 +303,7 @@ SECTIONS
+     /* Put startup code at beginning so that _start keeps same address.  */
+     ${RELOCATING+${STARTUP_CODE}}
+ 
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${RELOCATING+*(.text.*)}
+     /* .gnu.warning sections are handled specially by elf.em.  */
+diff --git a/ld/scripttempl/elfmicroblaze.sc b/ld/scripttempl/elfmicroblaze.sc
+index 5121c5df3a7..93266e8f102 100644
+--- a/ld/scripttempl/elfmicroblaze.sc
++++ b/ld/scripttempl/elfmicroblaze.sc
+@@ -79,6 +79,7 @@ SECTIONS
+ 
+   ${RELOCATING+ _ftext  =  .;}
+   .text : {
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${RELOCATING+*(.text.*)}
+     ${RELOCATING+*(.gnu.linkonce.t.*)}
+diff --git a/ld/scripttempl/elfxgate.sc b/ld/scripttempl/elfxgate.sc
+index 2655e8924f7..3dab6db58c9 100644
+--- a/ld/scripttempl/elfxgate.sc
++++ b/ld/scripttempl/elfxgate.sc
+@@ -317,6 +317,7 @@ SECTIONS
+     /* Put startup code at beginning so that _start keeps same address.  */
+     ${RELOCATING+${STARTUP_CODE}}
+ 
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${RELOCATING+*(.text.*)}
+     /* .gnu.warning sections are handled specially by elf.em.  */
+diff --git a/ld/scripttempl/elfxtensa.sc b/ld/scripttempl/elfxtensa.sc
+index 7c71525cbeb..038a361c954 100644
+--- a/ld/scripttempl/elfxtensa.sc
++++ b/ld/scripttempl/elfxtensa.sc
+@@ -418,6 +418,7 @@ cat <<EOF
+     ${RELOCATING+${INIT_END}}
+ 
+     ${RELOCATING+${TEXT_START_SYMBOLS}}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.literal .text .stub${RELOCATING+ .literal.* .text.* .gnu.linkonce.literal.* .gnu.linkonce.t.*.literal .gnu.linkonce.t.*})
+     /* .gnu.warning sections are handled specially by elf.em.  */
+     *(.gnu.warning)
+diff --git a/ld/scripttempl/ft32.sc b/ld/scripttempl/ft32.sc
+index e52e75cd924..8c966de3bb1 100644
+--- a/ld/scripttempl/ft32.sc
++++ b/ld/scripttempl/ft32.sc
+@@ -32,6 +32,7 @@ SECTIONS
+ {
+   .text :
+   {
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text${RELOCATING+*})
+     ${RELOCATING+*(.strings)
+     *(._pm*)
+diff --git a/ld/scripttempl/i386beos.sc b/ld/scripttempl/i386beos.sc
+index 1a2422edc04..0b8391fa4d5 100644
+--- a/ld/scripttempl/i386beos.sc
++++ b/ld/scripttempl/i386beos.sc
+@@ -60,6 +60,7 @@ SECTIONS
+   {
+     ${RELOCATING+ __text_start__ = . ;}
+     ${RELOCATING+ KEEP (*(SORT_NONE(.init)))}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${R_TEXT}
+     *(.glue_7t)
+diff --git a/ld/scripttempl/i386go32.sc b/ld/scripttempl/i386go32.sc
+index 9459f00492c..59d4f917201 100644
+--- a/ld/scripttempl/i386go32.sc
++++ b/ld/scripttempl/i386go32.sc
+@@ -34,6 +34,7 @@ ${RELOCATING+ENTRY (${ENTRY})}
+ SECTIONS
+ {
+   .text ${RELOCATING+ ${TARGET_PAGE_SIZE}+SIZEOF_HEADERS} : {
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${RELOCATING+*(.text.*)}
+     ${RELOCATING+*(.gnu.linkonce.t*)}
+diff --git a/ld/scripttempl/iq2000.sc b/ld/scripttempl/iq2000.sc
+index 47bd777327e..4ccb1634343 100644
+--- a/ld/scripttempl/iq2000.sc
++++ b/ld/scripttempl/iq2000.sc
+@@ -297,6 +297,7 @@ cat <<EOF
+   .text    ${RELOCATING-0} :
+   {
+     ${RELOCATING+${TEXT_START_SYMBOLS}}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${RELOCATING+*(.text.*)}
+     *(.stub)
+diff --git a/ld/scripttempl/mcorepe.sc b/ld/scripttempl/mcorepe.sc
+index 1c5b46e4a6f..37a02a43da3 100644
+--- a/ld/scripttempl/mcorepe.sc
++++ b/ld/scripttempl/mcorepe.sc
+@@ -66,6 +66,7 @@ SECTIONS
+   .text ${RELOCATING+ __image_base__ + __section_alignment__ } :
+   {
+     ${RELOCATING+ KEEP (*(SORT_NONE(.init)))}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${R_TEXT}
+     ${RELOCATING+ *(.text.*)}
+diff --git a/ld/scripttempl/mep.sc b/ld/scripttempl/mep.sc
+index 6b80c36066b..5eda111c86a 100644
+--- a/ld/scripttempl/mep.sc
++++ b/ld/scripttempl/mep.sc
+@@ -310,6 +310,7 @@ cat <<EOF
+   .text         ${RELOCATING-0} :
+   {
+     ${RELOCATING+${TEXT_START_SYMBOLS}}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text .stub${RELOCATING+ .text.* .gnu.linkonce.t.*})
+     /* .gnu.warning sections are handled specially by elf.em.  */
+     *(.gnu.warning)
+diff --git a/ld/scripttempl/mmo.sc b/ld/scripttempl/mmo.sc
+index 746fb1a062b..305cd816e94 100644
+--- a/ld/scripttempl/mmo.sc
++++ b/ld/scripttempl/mmo.sc
+@@ -30,6 +30,7 @@ SECTIONS
+     ${RELOCATING+ KEEP (*(SORT_NONE(.init)))}
+     ${RELOCATING+ PROVIDE (_init_end = .);}
+ 
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${RELOCATING+*(.text.*)}
+     ${RELOCATING+*(.gnu.linkonce.t*)}
+diff --git a/ld/scripttempl/nds32elf.sc b/ld/scripttempl/nds32elf.sc
+index 9645e80c567..4d04102d85f 100644
+--- a/ld/scripttempl/nds32elf.sc
++++ b/ld/scripttempl/nds32elf.sc
+@@ -434,11 +434,12 @@ cat <<EOF
+   .text         ${RELOCATING-0} :
+   {
+     ${RELOCATING+${TEXT_START_SYMBOLS}}
+-    ${RELOCATING+*(.text.unlikely .text.*_unlikely .text.unlikely.*)}
+-    ${RELOCATING+*(.text.exit .text.exit.*)}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     ${RELOCATING+*(.text.startup .text.startup.*)}
+     ${RELOCATING+*(.text.hot .text.hot.*)}
+     ${RELOCATING+*(SORT(.text.sorted.*))}
++    ${RELOCATING+*(.text.unlikely .text.*_unlikely .text.unlikely.*)}
++    ${RELOCATING+*(.text.exit .text.exit.*)}
+     *(.text .stub${RELOCATING+ .text.* .gnu.linkonce.t.*})
+     /* .gnu.warning sections are handled specially by elf.em.  */
+     *(.gnu.warning)
+diff --git a/ld/scripttempl/pe.sc b/ld/scripttempl/pe.sc
+index e9879a9fee4..e3169d34656 100644
+--- a/ld/scripttempl/pe.sc
++++ b/ld/scripttempl/pe.sc
+@@ -91,6 +91,7 @@ SECTIONS
+   .text ${RELOCATING+ __image_base__ + ( __section_alignment__ < ${TARGET_PAGE_SIZE} ? . : __section_alignment__ )} :
+   {
+     ${RELOCATING+KEEP (*(SORT_NONE(.init)))}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${R_TEXT}
+     ${RELOCATING+ *(.text.*)}
+diff --git a/ld/scripttempl/pep.sc b/ld/scripttempl/pep.sc
+index df1f4116ca4..8f036af6db5 100644
+--- a/ld/scripttempl/pep.sc
++++ b/ld/scripttempl/pep.sc
+@@ -92,6 +92,7 @@ SECTIONS
+   .text ${RELOCATING+ __image_base__ + ( __section_alignment__ < ${TARGET_PAGE_SIZE} ? . : __section_alignment__ )} :
+   {
+     ${RELOCATING+KEEP (*(SORT_NONE(.init)))}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${R_TEXT}
+     ${RELOCATING+ *(.text.*)}
+diff --git a/ld/scripttempl/pru.sc b/ld/scripttempl/pru.sc
+index 3ff86bc61c7..d4d79cbcf82 100644
+--- a/ld/scripttempl/pru.sc
++++ b/ld/scripttempl/pru.sc
+@@ -110,6 +110,7 @@ SECTIONS
+     ${RELOCATING+KEEP (*(.init0))}
+ 
+     ${RELOCATING+. = ALIGN(4);}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${RELOCATING+. = ALIGN(4);}
+     ${RELOCATING+*(.text.*)}
+diff --git a/ld/scripttempl/v850.sc b/ld/scripttempl/v850.sc
+index 3de6bdd2ef5..c5a02da86f4 100644
+--- a/ld/scripttempl/v850.sc
++++ b/ld/scripttempl/v850.sc
+@@ -76,6 +76,7 @@ SECTIONS
+ 
+   .text		:
+   {
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${RELOCATING+*(.text.*)}
+ 
+diff --git a/ld/scripttempl/v850_rh850.sc b/ld/scripttempl/v850_rh850.sc
+index 2c70914c119..682868b1252 100644
+--- a/ld/scripttempl/v850_rh850.sc
++++ b/ld/scripttempl/v850_rh850.sc
+@@ -80,6 +80,7 @@ SECTIONS
+ 
+   .text		:
+   {
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${RELOCATING+*(.text.*)}
+ 
+diff --git a/ld/scripttempl/visium.sc b/ld/scripttempl/visium.sc
+index d11dafd7157..69a39a4e795 100644
+--- a/ld/scripttempl/visium.sc
++++ b/ld/scripttempl/visium.sc
+@@ -67,6 +67,7 @@ SECTIONS
+ 
+   .text ${RELOCATING-0} : {
+     ${RELOCATING+ _ftext  =  .;}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${RELOCATING+*(.text.*)}
+     ${RELOCATING+*(.gnu.linkonce.t.*)}
+diff --git a/ld/scripttempl/xstormy16.sc b/ld/scripttempl/xstormy16.sc
+index ccae0a2e04f..e2f26c6dda4 100644
+--- a/ld/scripttempl/xstormy16.sc
++++ b/ld/scripttempl/xstormy16.sc
+@@ -178,6 +178,7 @@ SECTIONS
+   .text    ${RELOCATING-0} :
+   {
+     ${RELOCATING+${TEXT_START_SYMBOLS}}
++    ${RELOCATING+INCLUDE config.text_section_ordering_file}
+     *(.text)
+     ${RELOCATING+*(.text.*)}
+     *(.stub)
+-- 
+2.34.1
+

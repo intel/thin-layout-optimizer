@@ -1,0 +1,43 @@
+From 821b1739ab6a33b7fe4a18e24ec331f259ee0630 Mon Sep 17 00:00:00 2001
+From: Noah Goldstein <goldstein.w.n@gmail.com>
+Date: Mon, 22 Apr 2024 16:23:06 -0500
+Subject: ld: Add API for getting target arch
+
+---
+ ld/ldemul.c | 6 ++++++
+ ld/ldemul.h | 2 ++
+ 2 files changed, 8 insertions(+)
+
+diff --git a/ld/ldemul.c b/ld/ldemul.c
+index d0943de1f2a..7e0693753f3 100644
+--- a/ld/ldemul.c
++++ b/ld/ldemul.c
+@@ -59,6 +59,12 @@ ldemul_before_parse (void)
+   ld_emulation->before_parse ();
+ }
+ 
++const char *
++ldemul_emulation_name (void)
++{
++  return ld_emulation == NULL ? NULL : ld_emulation->emulation_name;
++}
++
+ void
+ ldemul_before_plugin_all_symbols_read (void)
+ {
+diff --git a/ld/ldemul.h b/ld/ldemul.h
+index f3e8bb697f4..ab30891bfbc 100644
+--- a/ld/ldemul.h
++++ b/ld/ldemul.h
+@@ -32,6 +32,8 @@ extern void ldemul_after_parse
+   (void);
+ extern void ldemul_before_parse
+   (void);
++extern const char * ldemul_emulation_name
++  (void);
+ extern void ldemul_before_plugin_all_symbols_read
+   (void);
+ extern void ldemul_after_open
+-- 
+2.34.1
+
