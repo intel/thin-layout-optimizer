@@ -366,7 +366,8 @@ def prepare_for_target(target, lines):
         lines = "\n".join(lines)
         if target == "ld.patch":
             return lines
-        return LD_BASE_SCRIPT.replace("::CUSTOM_ORDER::", lines)
+        lines = ".text : {\n" + lines + "\n}\n"
+        return lines
     elif target == "gold":
         return "\n".join(lines)
     return None
@@ -559,9 +560,9 @@ if ALIASES is not None:
 
 if TARGET in ["gold", "ld.gold"]:
     TARGET = "gold"
-elif TARGET in ["ld.orig"]:
-    pass
-elif TARGET in ["ld", "ld.patch"]:
+elif TARGET in ["ld", "ld.orig"]:
+    TARGET = "ld.orig"
+elif TARGET in ["ld.patch"]:
     TARGET = "ld.patch"
 else:
     print("Unknown/invalid target: {}".format(TARGET))
