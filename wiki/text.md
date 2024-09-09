@@ -403,17 +403,17 @@ align and how much to align them by (or just run with the defaults).
 ### 3.8. Thin-Layout-Optimizer Re-Linking
 
 Unfortunately, we currently rely on custom patches for
-[LD](https://linux.die.net/man/1/ld) and
-[GOLD](https://en.wikipedia.org/wiki/Gold_(linker)) to get our desired
+[LD](https://linux.die.net/man/1/ld) to get our desired
 transparent functionality. We are working to upstream our changes.
 
-We patch LD and GOLD in three key ways:
+We patch LD in two key ways:
 
-1. Read a linker mapfile from an env variable
-2. Lookup the current link target in the mapfile pointed to by the env
-   variable (if present) to find the target's optimized layout
-   preferences.
-3. Take layout preferences and apply them
+1. Accept `--section-ordering-map` file to serve as a lookup table for
+   finding the correct `--section-ordering-file` for the given target
+   DSO.
+2. Accept env variables `LD_ORDERING_FILE` and `LD_ORDERING_FILE_MAP`
+   for the `--section-ordering-file` and `--section-ordering-map`
+   respectively.
 
 The linker mapfile serves as a map from DSO name to section linker
 layout scripts.
@@ -436,7 +436,7 @@ the build process. If the mapfile is set in the environment, the
 linker will search for the output DSO in it. If the mapfile is unset
 or the DSO is not found, there is absolutely no change to the linking
 process. If the mapfile and DSO are both found, the only change to the
-linking process is the section order/alignment. Finally, if the DSO
+linking process is the section order. Finally, if the DSO
 you are building has its own custom linker script, those preferences
 will always be respected.
 
@@ -479,13 +479,13 @@ $> export CUSTOM_LD_INSTALL=${DEMO_ROOT}/binutils-build
 $> git clone git://sourceware.org/git/binutils-gdb.git
 $> cd binutils-gdb
 # Latest release as of writing this (also what the patches are based on)
-$> git checkout binutils-2_41
+$> git checkout binutils-2_43
 $> git am ${DEMO_ROOT}/thin-layout-optimizer/patches/ld/*.patch
 ```
 
 5. Build LD
 ```sh
-$> ./configure --disable-werror --enable-gold --prefix=${CUSTOM_LD_INSTALL}
+$> ./configure --disable-werror --prefix=${CUSTOM_LD_INSTALL}
 $> make -j$(nproc) && make install
 ```
 
@@ -508,7 +508,7 @@ $> cd llvm-project
 8. Build LLVM
 ```sh
 # Latest release as of writing this.
-$> git checkout llvmorg-18.1.1
+$> git checkout llvmorg-18.1.8
 # The key here is the -ffunction-sections, otherwise is a fairly standard build command
 $> cmake -S llvm -B build -DCMAKE_INSTALL_PREFIX=${CUSTOM_LLVM_INSTALL} -DLLVM_ENABLE_PROJECTS='clang;llvm;lld' -DCMAKE_CXX_FLAGS="-ffunction-sections -march=native -O3" -DCMAKE_C_FLAGS="-ffunction-sections -march=native -O3" -DCMAKE_EXE_LINKER_FLAGS="-ffunction-sections" -DCMAKE_SHARED_LINKER_FLAGS="-ffunction-sections" -DCMAKE_MODULE_LINKER_FLAGS="-ffunction-sections" -DCMAKE_BUILD_TYPE=Release
 $> cd build
@@ -564,14 +564,14 @@ sys	1m35.236s
 # Compare the order of sections in baseline LLVM to optimized section layout
 $> python3 ${DEMO_ROOT}/thin-layout-optimizer/scripts/compare-order-glb.py ${CUSTOM_LLVM_INSTALL}/bin/clang-18
 ...
-Distance: 7405.756021058722
+Distance: 5344.2075146103
 ...
 $> make install
 # Re-compare distance after install (see that out linker script had an effect).
 # Lower number means "closer". The exact value is not particularly meaningful.
 $> python3 ${DEMO_ROOT}/thin-layout-optimizer/scripts/compare-order-glb.py ${CUSTOM_LLVM_INSTALL}/bin/clang-18
 ...
-Distance: 265.48223611874994
+Distance: 4.663122735371078
 ...
 ```
 
