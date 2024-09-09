@@ -1,0 +1,245 @@
+From 0867438ded7856ec859a85742a7036459f521c73 Mon Sep 17 00:00:00 2001
+From: Noah Goldstein <goldstein.w.n@gmail.com>
+Date: Tue, 18 Jun 2024 20:17:34 -0500
+Subject: ld: Add support for `--section-ordering-map`
+
+The `--section-ordering-map` argument is used to help users with
+`--section-ordering-file`. Since each DSO may need its own ordering
+file, managing the linker flags to effectively use the feature can be
+prohibitvely difficult. The `--section-ordering-map` file allows users
+to set a common linker argument for a project. In the provided
+argument is a file with key/value pairs mapping DSO names -> section
+ordering files.
+---
+ ld/ldlex.h  |   1 +
+ ld/lexsup.c | 149 ++++++++++++++++++++++++++++++++++++++++++++++++++--
+ 2 files changed, 146 insertions(+), 4 deletions(-)
+
+diff --git a/ld/ldlex.h b/ld/ldlex.h
+index defe3fcbbb9..d75cecaf018 100644
+--- a/ld/ldlex.h
++++ b/ld/ldlex.h
+@@ -63,6 +63,7 @@ enum option_values
+   OPTION_SORT_COMMON,
+   OPTION_SORT_SECTION,
+   OPTION_SECTION_ORDERING_FILE,
++  OPTION_SECTION_ORDERING_FILES_MAP,
+   OPTION_STATS,
+   OPTION_SYMBOLIC,
+   OPTION_SYMBOLIC_FUNCTIONS,
+diff --git a/ld/lexsup.c b/ld/lexsup.c
+index 4aa0124ce2f..4a45343f96e 100644
+--- a/ld/lexsup.c
++++ b/ld/lexsup.c
+@@ -62,6 +62,7 @@ static void set_default_dirlist (char *);
+ static void set_section_start (char *, char *);
+ static void set_segment_start (const char *, char *);
+ static void help (void);
++static char *find_section_ordering_file_from_map (const char *, const char *);
+ 
+ /* The long options.  This structure is used for both the option
+    parsing and the help text.  */
+@@ -490,6 +491,9 @@ static const struct ld_option ld_options[] =
+   { {"section-ordering-file", required_argument, NULL, OPTION_SECTION_ORDERING_FILE},
+     '\0', N_("FILE"),
+     N_("Sort sections by statements in FILE"), TWO_DASHES },
++  { {"section-ordering-files-map", required_argument, NULL,
++    OPTION_SECTION_ORDERING_FILES_MAP}, '\0', N_("FILE"),
++    N_("Map FILE of output DSOs to section-ordering-files"), TWO_DASHES },
+   { {"spare-dynamic-tags", required_argument, NULL, OPTION_SPARE_DYNAMIC_TAGS},
+     '\0', N_("COUNT"), N_("How many tags to reserve in .dynamic section"),
+     TWO_DASHES },
+@@ -658,6 +662,8 @@ parse_args (unsigned argc, char **argv)
+   unsigned i;
+   int is, il, irl;
+   int ingroup = 0;
++  char *output_dso = NULL;
++  char *section_ordering_files_map = NULL;
+   char *default_dirlist = NULL;
+   char *shortopts;
+   struct option *longopts;
+@@ -818,8 +824,33 @@ parse_args (unsigned argc, char **argv)
+ 	continue;
+ 
+       if (optc == -1)
+-	break;
+-
++	{
++	  if (section_ordering_files_map != NULL)
++	    {
++	      if (command_line.section_ordering_file != NULL)
++		{
++		  einfo (_ ("%P: Warning: ignoring "
++			    "--section-ordering-files-map as "
++			    "--section-ordering-file: %s was specified\n"),
++			 command_line.section_ordering_file);
++		  break;
++		}
++	      command_line.section_ordering_file
++		  = find_section_ordering_file_from_map (
++		      section_ordering_files_map, output_dso);
++	      if (verbose)
++		{
++		  if (command_line.section_ordering_file)
++		    info_msg (_ ("Using --section-ordering-file: %s\n"),
++			      command_line.section_ordering_file);
++		  else
++		    info_msg (_ ("Unable to find --section-ordering-file for "
++				 "%s in map: %s\n"),
++			      output_dso, section_ordering_files_map);
++		}
++	    }
++	  break;
++	}
+       switch (optc)
+ 	{
+ 	case '?':
+@@ -1194,6 +1225,7 @@ parse_args (unsigned argc, char **argv)
+ 	  link_info.optimize = strtoul (optarg, NULL, 0) != 0;
+ 	  break;
+ 	case 'o':
++	  output_dso = optarg;
+ 	  lang_add_output (optarg, 0);
+ 	  break;
+ 	case OPTION_OFORMAT:
+@@ -1410,6 +1442,9 @@ parse_args (unsigned argc, char **argv)
+ 	    einfo (_("%P: warning: section ordering file changed.  Ignoring earlier definition\n"));
+ 	  command_line.section_ordering_file = optarg;
+ 	  break;
++	case OPTION_SECTION_ORDERING_FILES_MAP:
++	  section_ordering_files_map = optarg;
++	  break;
+ 	case OPTION_STATS:
+ 	  config.stats = true;
+ 	  break;
+@@ -2302,7 +2337,7 @@ elf_static_list_options (FILE *file)
+   fprintf (file, _("\
+   -z execstack                Mark executable as requiring executable stack\n"));
+   fprintf (file, _("\
+-  -z noexecstack              Mark executable as not requiring executable stack\n"));  
++  -z noexecstack              Mark executable as not requiring executable stack\n"));
+   fprintf (file, _("\
+   --warn-execstack-objects    Generate a warning if an object file requests an executable stack\n"));
+ #if DEFAULT_LD_WARN_EXECSTACK == 0
+@@ -2323,7 +2358,7 @@ elf_static_list_options (FILE *file)
+   --error-execstack           Turn warnings about executable stacks into errors\n"));
+   fprintf (file, _("\
+   --no-error-execstack        Do not turn warnings about executable stacks into errors\n"));
+-  
++
+ #if DEFAULT_LD_WARN_RWX_SEGMENTS
+   fprintf (file, _("\
+   --warn-rwx-segments         Generate a warning if a LOAD segment has RWX permissions (default)\n"));
+@@ -2502,3 +2537,109 @@ help (void)
+   if (REPORT_BUGS_TO[0])
+     printf (_("Report bugs to %s\n"), REPORT_BUGS_TO);
+ }
++
++static char *
++find_section_ordering_file_from_map (const char *section_ordering_files_map,
++				     const char *output_dso)
++{
++  FILE *fp = NULL;
++  char *line = NULL;
++  char *section_ordering_file = NULL;
++  size_t output_dso_len = 0;
++  size_t line_sz = 0;
++
++  if (output_dso == NULL || section_ordering_files_map == NULL)
++    {
++      return NULL;
++    }
++
++  fp = fopen (section_ordering_files_map, "r");
++  if (fp == NULL)
++    {
++      einfo (
++	  _ ("%P: warning: unable to open --section-ordering-files-map: %s\n"),
++	  section_ordering_files_map);
++      return NULL;
++    }
++
++  output_dso = lbasename (output_dso);
++  output_dso_len = strlen (output_dso);
++
++  for (;;)
++    {
++      char *line_dso_end, *cur_line, *comment_start;
++      const char *line_dso;
++      ssize_t nread_s;
++      size_t nread, line_dso_len, i;
++      nread_s = getline (&line, &line_sz, fp);
++      if (nread_s < 0)
++	{
++	  if (line != NULL)
++	    {
++	      free (line);
++	    }
++	  break;
++	}
++
++      nread = nread_s;
++      cur_line = line;
++
++      /* Strip leading whitespace.  */
++      while (nread > 0 && ISSPACE (cur_line[0]))
++	{
++	  --nread;
++	  ++cur_line;
++	}
++
++      /* Strip comment (starting with '#').  */
++      comment_start = (char *) memchr (cur_line, '#', nread);
++      if (comment_start != NULL)
++	{
++	  *comment_start = '\0';
++	  nread = comment_start - cur_line;
++	}
++
++      /* Strip trailing whitespace.  */
++      while (nread > 0 && ISSPACE (cur_line[nread - 1]))
++	{
++	  cur_line[nread - 1] = '\0';
++	  --nread;
++	}
++
++      line_dso_end = NULL;
++      for (i = 0; i < nread; ++i)
++	{
++	  if (ISSPACE (cur_line[i]))
++	    {
++	      line_dso_end = cur_line + i;
++	      break;
++	    }
++	}
++      if (line_dso_end == NULL)
++	{
++	  continue;
++	}
++
++      *line_dso_end = '\0';
++      line_dso = cur_line;
++      line_dso = lbasename (line_dso);
++      line_dso_len = line_dso_end - line_dso;
++      /* Check if DSO entry matches the target.  */
++      if (line_dso_len == output_dso_len
++	  && memcmp (line_dso, output_dso, line_dso_len) == 0)
++	{
++	  do
++	    {
++	      ++line_dso_end;
++	    }
++	  while (ISSPACE (line_dso_end[0]));
++
++	  /* We end up leaking memory allocated for line. Its a very
++	   * bounded amount we make leak so probably okay.  */
++	  section_ordering_file = line_dso_end;
++	  break;
++	}
++    }
++  fclose (fp);
++  return section_ordering_file;
++}
+-- 
+2.34.1
+

@@ -1,0 +1,28 @@
+From a1afea8cfecd6e209415578f4e834ee43502a2f5 Mon Sep 17 00:00:00 2001
+From: Noah Goldstein <goldstein.w.n@gmail.com>
+Date: Mon, 9 Sep 2024 10:27:02 -0700
+Subject: ld: Support `--section-ordering-file` and `--section-ordering-map`
+ with env variables
+
+---
+ ld/lexsup.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/ld/lexsup.c b/ld/lexsup.c
+index 4a45343f96e..4301038dc52 100644
+--- a/ld/lexsup.c
++++ b/ld/lexsup.c
+@@ -825,6 +825,10 @@ parse_args (unsigned argc, char **argv)
+ 
+       if (optc == -1)
+ 	{
++	  if (command_line.section_ordering_file == NULL)
++	    command_line.section_ordering_file = getenv ("LD_ORDERING_SCRIPT");
++	  if (section_ordering_files_map == NULL)
++	    section_ordering_files_map = getenv ("LD_ORDERING_SCRIPT_MAP");
+ 	  if (section_ordering_files_map != NULL)
+ 	    {
+ 	      if (command_line.section_ordering_file != NULL)
+-- 
+2.34.1
+
